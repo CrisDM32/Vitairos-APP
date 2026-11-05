@@ -1,5 +1,6 @@
 package com.vitairos.industrialai.ui
 
+import com.vitairos.industrialai.data.MockData
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.format.ResolverStyle
@@ -38,6 +39,21 @@ object Validators {
         runCatching { LocalDate.parse(value.trim(), dateFormat) }.fold({ null }, { "Fecha no válida (dd/mm/aaaa)" })
 
     fun number(value: String): String? = if (numberRegex.matches(value.trim())) null else "Ingrese un número (ej.: 11,5)"
+
+    /**
+     * Valida formato, tamaño y cantidad de un adjunto. [currentCount] es la cantidad ya adjunta;
+     * si [replacing] es true no se aplica el límite de cantidad.
+     */
+    fun attachment(name: String, sizeMb: Double, currentCount: Int, replacing: Boolean): String? {
+        val ext = name.substringAfterLast('.', "").lowercase()
+        return when {
+            ext !in setOf("jpg", "jpeg", "png", "pdf") -> "Formato no permitido (.$ext). Use JPG, PNG o PDF."
+            sizeMb <= 0.0 -> "El archivo está vacío."
+            sizeMb > MockData.MAX_FILE_MB -> "El archivo supera el máximo de 10 MB."
+            !replacing && currentCount >= MockData.MAX_ATTACHMENTS -> "Máximo ${MockData.MAX_ATTACHMENTS} archivos por reporte."
+            else -> null
+        }
+    }
 
     /** Valida un campo extraído por la simulación según su etiqueta. */
     fun extractedField(label: String, value: String): String? = when {

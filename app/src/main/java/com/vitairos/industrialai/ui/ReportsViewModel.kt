@@ -199,16 +199,8 @@ class ReportsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Valida formato y tamaño; devuelve el mensaje de error o null si el archivo es aceptable. */
-    fun validateAttachment(name: String, sizeMb: Double, replaceId: String? = null): String? {
-        val ext = name.substringAfterLast('.', "").lowercase()
-        if (ext !in setOf("jpg", "jpeg", "png", "pdf")) return "Formato no permitido (.$ext). Use JPG, PNG o PDF."
-        if (sizeMb <= 0.0) return "El archivo está vacío."
-        if (sizeMb > MockData.MAX_FILE_MB) return "El archivo supera el máximo de 10 MB."
-        if (replaceId == null && draft.attachments.size >= MockData.MAX_ATTACHMENTS) {
-            return "Máximo ${MockData.MAX_ATTACHMENTS} archivos por reporte."
-        }
-        return null
-    }
+    fun validateAttachment(name: String, sizeMb: Double, replaceId: String? = null): String? =
+        Validators.attachment(name, sizeMb, draft.attachments.size, replacing = replaceId != null)
 
     /** Agrega (o reemplaza) un adjunto. Devuelve el mensaje de error o null si se agregó. */
     fun addAttachment(name: String, sizeMb: Double, replaceId: String? = null, path: String = ""): String? {
