@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.Vitairos" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/verde_noche</item>
+        <item name="android:statusBarColor">@color/verde_noche</item>
+        <item name="android:navigationBarColor">@color/verde_noche</item>
+    </style>
+</resources>
