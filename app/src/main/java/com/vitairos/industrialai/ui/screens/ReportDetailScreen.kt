@@ -67,7 +67,7 @@ fun ReportDetailScreen(vm: ReportsViewModel, reportId: String, onBack: () -> Uni
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                 ) {
                     Column(Modifier.padding(14.dp)) {
-                        Text("Observación del supervisor (simulada)", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Text("Observación del supervisor", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)
                         Text(it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onPrimaryContainer)
                     }
                 }
@@ -89,10 +89,22 @@ fun ReportDetailScreen(vm: ReportsViewModel, reportId: String, onBack: () -> Uni
                     InfoRow("Ubicación", if (r.latitude != null && r.longitude != null) formatCoords(r.latitude, r.longitude) else "No registrada")
                 }
             }
+            r.weather?.let { raw ->
+                val w = remember(raw) { org.json.JSONObject(raw) }
+                SectionTitle("Clima al crear el reporte")
+                InfoRow("Temperatura", "${w.getDouble("temperatureC")} °C")
+                InfoRow("Humedad", "${w.getInt("humidityPercent")} %")
+                InfoRow("Viento", "${w.getDouble("windSpeedKmh")} km/h")
+                InfoRow("Condición (WMO)", w.getInt("weatherCode").toString())
+                InfoRow("Hora de lectura", w.getString("observedAt"))
+                val uri = androidx.compose.ui.platform.LocalUriHandler.current
+                TextButton({ uri.openUri("https://open-meteo.com/") }) { Text("Datos de Open-Meteo") }
+            }
             SectionTitle("Adjuntos")
             r.attachments.forEach { a ->
                 Text("• ${a.name} · ${"%.1f".format(a.sizeMb)} MB", style = MaterialTheme.typography.bodyLarge)
-                if (a.path.isNotBlank()) AttachmentPreview(a, Modifier.fillMaxWidth(0.6f).height(220.dp).align(Alignment.CenterHorizontally))
+                if (a.path.isBlank()) TextButton({ vm.download(r.id,a) }, enabled = vm.isOnline) { Text("Descargar adjunto") }
+                else AttachmentPreview(a, Modifier.fillMaxWidth(0.6f).height(220.dp).align(Alignment.CenterHorizontally))
             }
 
             SectionTitle("Trazabilidad")
@@ -112,7 +124,14 @@ fun ReportDetailScreen(vm: ReportsViewModel, reportId: String, onBack: () -> Uni
                 )
             }
         }
-        if (r.status != ReportStatus.SINCRONIZADO && r.status != ReportStatus.ENVIANDO) {
+        if (vm.user?.role == com.vitairos.industrialai.model.Role.SUPERVISOR && r.status == ReportStatus.SINCRONIZADO) {
+            var note by remember(r.id) { mutableStateOf("") }
+            Column(Modifier.padding(16.dp)) {
+                androidx.compose.material3.OutlinedTextField(note, { if (it.length <= 300) note = it }, label = { Text("Observación del supervisor") })
+                PrimaryButton("Solicitar corrección", { vm.correct(r,note) }, enabled = vm.isOnline && note.isNotBlank())
+            }
+        }
+        if (r.user == vm.user?.name && r.status != ReportStatus.SINCRONIZADO && r.status != ReportStatus.ENVIANDO) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 when (r.status) {
                     ReportStatus.REQUIERE_CORRECCION -> PrimaryButton("Corregir y reenviar", { onEdit(r) }, icon = Icons.Filled.Edit)

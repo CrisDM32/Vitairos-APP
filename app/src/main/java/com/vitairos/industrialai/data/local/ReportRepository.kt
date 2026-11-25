@@ -41,6 +41,7 @@ class ReportRepository(private val db: AppDatabase) {
         id = id, sortKey = numberOf(id), type = type, process = process, area = area, shift = shift,
         notes = notes, user = user, createdAt = createdAt, status = status.name, attempts = attempts,
         supervisorNote = supervisorNote, latitude = latitude, longitude = longitude,
+        weather = weather, dirty = dirty, deleted = deleted,
     )
 
     private fun ReportWithDetails.toModel() = Report(
@@ -52,5 +53,6 @@ class ReportRepository(private val db: AppDatabase) {
         },
         timeline = timeline.sortedBy { it.rowId }.map { TimelineEvent(it.time, it.text) },
         supervisorNote = report.supervisorNote, latitude = report.latitude, longitude = report.longitude,
+        weather = report.weather, dirty = report.dirty, deleted = report.deleted,
     )
 }

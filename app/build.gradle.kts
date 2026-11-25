@@ -10,8 +10,14 @@ android {
 
     defaultConfig {
         applicationId = "com.vitairos.industrialai"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 26
         targetSdk = 37
+        for ((key, port) in mapOf("IDENTITY_URL" to 8081, "REPORTS_URL" to 8082)) {
+            val url = providers.gradleProperty(key).orElse("http://10.0.2.2:$port").get()
+            require(!url.contains('"') && !url.contains('\\'))
+            buildConfigField("String", key, "\"$url\"")
+        }
         versionCode = 1
         versionName = "0.2"
     }
@@ -27,6 +33,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     testOptions {
         unitTests.all { it.useJUnitPlatform() }
@@ -47,6 +54,8 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     implementation(libs.androidx.datastore.preferences)
 
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
     testImplementation(libs.junit)
     testImplementation(libs.kotest.runner.junit5)
     testImplementation(libs.kotest.assertions.core)

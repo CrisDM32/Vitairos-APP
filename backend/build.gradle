@@ -1,0 +1,27 @@
+plugins { id 'org.springframework.boot' version '4.0.10' apply false }
+
+subprojects {
+    apply plugin: 'java'
+    apply plugin: 'org.springframework.boot'
+    repositories { mavenCentral() }
+    tasks.withType(JavaCompile).configureEach {
+        options.release = 17
+        options.encoding = 'UTF-8'
+        options.compilerArgs.add('-parameters')
+    }
+    dependencies {
+        implementation platform(org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES)
+        implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+        implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+        runtimeOnly 'com.h2database:h2'
+        testImplementation 'org.springframework.boot:spring-boot-starter-test'
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    }
+    tasks.named('test') { useJUnitPlatform() }
+}
+project(':report-service') {
+    dependencies {
+        implementation 'org.springframework.boot:spring-boot-starter-restclient'
+        testImplementation project(':identity-service')
+    }
+}

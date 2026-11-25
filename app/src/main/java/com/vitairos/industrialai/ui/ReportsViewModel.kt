@@ -6,8 +6,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.vitairos.industrialai.data.MockData
-import com.vitairos.industrialai.data.SettingsStore
 import com.vitairos.industrialai.data.local.AppDatabase
 import com.vitairos.industrialai.data.local.ReportRepository
 import com.vitairos.industrialai.model.Attachment
@@ -19,11 +17,13 @@ import com.vitairos.industrialai.model.ReportStatus
 import com.vitairos.industrialai.model.TimelineEvent
 import com.vitairos.industrialai.util.ConnectivityObserver
 import com.vitairos.industrialai.util.ImageUtils
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import com.vitairos.industrialai.data.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
+import java.time.Instant
+import java.util.UUID
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.LocalDateTime
@@ -48,125 +48,155 @@ data class Draft(
         shift.isBlank() && notes.isBlank() && attachments.isEmpty() && !hasLocation
 }
 
-/**
- * Estado único de la app (flujo unidireccional): las pantallas leen estado de Compose y emiten
- * eventos llamando a funciones del ViewModel. Room es la fuente de verdad; [reports] es su copia
- * observable, actualizada de forma optimista mientras hay escrituras pendientes.
- * La API de envío sigue simulada (mock).
- */
-class ReportsViewModel(app: Application) : AndroidViewModel(app) {
-    private val repo = ReportRepository(AppDatabase.get(app))
+class ReportsViewModel(private val app: Application) : AndroidViewModel(app) {
+    private val api = Backend()
     private val store = SettingsStore(app)
     private val connectivity = ConnectivityObserver(app)
-
-    var reports by mutableStateOf<List<Report>>(emptyList())
-        private set
-    /** false mientras se abre la base de datos y se lee la sesión guardada. */
+    private lateinit var repo: ReportRepository
+    private var session: Session? = null
+    private val disk = Mutex()
+    private val remote = Mutex()
+    private var accountJob = SupervisorJob(viewModelScope.coroutineContext[Job])
+    private val accountScope get() = CoroutineScope(viewModelScope.coroutineContext + accountJob)
+    private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val messages = _messages.asSharedFlow()
+    private var records by mutableStateOf<List<Report>>(emptyList())
+    val reports get() = records.filterNot { it.deleted }
     var ready by mutableStateOf(false)
         private set
     var user by mutableStateOf<DemoUser?>(null)
         private set
+    var loggingIn by mutableStateOf(false)
+        private set
     var demoOffline by mutableStateOf(false)
         private set
-    var simulateServerError by mutableStateOf(false)
+    private var networkAvailable by mutableStateOf(true)
+    val isOnline get() = networkAvailable && !demoOffline
+    private val defaults = Catalog(MockData.reportTypes, MockData.processes, MockData.areas, MockData.shifts)
+    var catalog by mutableStateOf(defaults)
         private set
     var draft by mutableStateOf(Draft())
         private set
-
-    private var networkAvailable by mutableStateOf(true)
-    val isOnline get() = networkAvailable && !demoOffline
-
-    private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
-    val messages = _messages.asSharedFlow()
-
-    private var nextNumber = 13L
-    private var nextAttachment = 100
     private val draftAddedPaths = mutableSetOf<String>()
     private val syncJobs = mutableMapOf<String, Job>()
-
-    // Escrituras a Room en orden; mientras haya pendientes se ignoran emisiones antiguas de la base.
-    private val writeLock = Mutex()
-    private var pendingWrites = 0
-    private var latest: List<Report>? = null
-
     private val fmt = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")
     private fun now() = LocalDateTime.now().format(fmt)
     private fun shortNow() = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd/MM HH:mm"))
 
     init {
         viewModelScope.launch {
-            repo.resetSending()
-            repo.seedIfEmpty(MockData.initialReports())
-            val s = store.load()
-            demoOffline = s.demoOffline
-            simulateServerError = s.simulateServerError
-            user = MockData.users.firstOrNull { it.email == s.sessionEmail }
+            demoOffline = store.offline()
             networkAvailable = connectivity.isOnlineNow()
+            val saved = store.session()
+            if (saved != null && Instant.parse(saved.expiresAt).isAfter(Instant.now())) activate(saved)
             ready = true
-            launch {
-                repo.observeAll().collect {
-                    latest = it
-                    if (pendingWrites == 0) applyList(it)
-                }
-            }
-            launch { connectivity.online.collect { updateOnline(network = it) } }
+            connectivity.online.collect { updateOnline(network = it) }
         }
     }
 
-    private fun applyList(list: List<Report>) {
-        reports = list
-        nextNumber = maxOf(nextNumber, (list.maxOfOrNull { ReportRepository.numberOf(it.id) } ?: 0L) + 1)
-    }
-
-    private fun write(block: suspend () -> Unit) {
-        pendingWrites++
+    fun login(email: String, password: String, done: (String?) -> Unit) {
+        if (loggingIn) return
+        loggingIn = true
         viewModelScope.launch {
             try {
-                writeLock.withLock { block() }
-            } finally {
-                pendingWrites--
-                if (pendingWrites == 0) latest?.let { applyList(it) }
+                val s = api.login(email,password)
+                store.setSession(s)
+                activate(s)
+                done(null)
+            } catch (e: Exception) {
+                done(if (e is ApiError && e.code == 401) "Correo o contraseña incorrectos" else "No se pudo iniciar sesión: ${e.localizedMessage}")
+            } finally { loggingIn = false }
+        }
+    }
+
+    private suspend fun activate(s: Session) {
+        val dbName = "reports-" + UUID.nameUUIDFromBytes(s.profile.email.toByteArray()) + ".db"
+        repo = ReportRepository(AppDatabase.get(app, dbName))
+        disk.withLock {
+            repo.resetSending()
+            // Recupera reportes reales del usuario de la antigua base compartida de demostración.
+            if (app.getDatabasePath("vitairos.db").exists()) {
+                val legacy = ReportRepository(AppDatabase.get(app))
+                val examples = MockData.initialReports().associateBy { it.id }
+                val imported = repo.observeAll().first().map { it.id }.toSet()
+                for (r in legacy.observeAll().first().filter { it.user == s.profile.name }) {
+                    if (r == examples[r.id]) continue
+                    val id = "LOCAL-" + UUID.nameUUIDFromBytes((s.profile.email + r.id).toByteArray())
+                    if (id !in imported) repo.save(r.copy(id=id,status=ReportStatus.BORRADOR,dirty=false))
+                    legacy.delete(r.id)
+                }
             }
+            records = repo.observeAll().first().sortedByDescending { LocalDateTime.parse(it.createdAt,fmt) }
         }
-    }
-
-    private fun persist(r: Report) {
-        reports = if (reports.any { it.id == r.id }) reports.map { if (it.id == r.id) r else it } else listOf(r) + reports
-        write { repo.save(r) }
-    }
-
-    private fun commit(id: String, change: (Report) -> Report) {
-        val current = report(id) ?: return
-        persist(change(current))
-    }
-
-    private fun Report.withEvent(text: String) = copy(timeline = timeline + TimelineEvent(shortNow(), text))
-
-    fun report(id: String?): Report? = reports.firstOrNull { it.id == id }
-
-    val pendingCount get() = reports.count { it.status == ReportStatus.EN_COLA || it.status == ReportStatus.ENVIANDO }
-
-    // ---- Sesión simulada ----
-    fun login(email: String, password: String): Boolean {
-        val found = MockData.users.firstOrNull { it.email.equals(email.trim(), ignoreCase = true) }
-        if (found != null && password == MockData.DEMO_PASSWORD) {
-            startSession(found)
-            return true
+        session = s
+        user = s.profile
+        accountScope.launch {
+            delay((Instant.parse(s.expiresAt).toEpochMilli() - System.currentTimeMillis()).coerceAtLeast(0))
+            if (session == s) logout()
         }
-        return false
-    }
-
-    fun loginAs(demo: DemoUser) = startSession(demo)
-
-    private fun startSession(demo: DemoUser) {
-        user = demo
-        viewModelScope.launch { store.setSession(demo.email) }
+        refresh()
     }
 
     fun logout() {
+        val previous = session ?: return
+        accountJob.cancel()
+        accountJob = SupervisorJob(viewModelScope.coroutineContext[Job])
+        syncJobs.clear()
         discardDraft()
+        session = null
         user = null
-        viewModelScope.launch { store.setSession(null) }
+        records = emptyList()
+        catalog = defaults
+        viewModelScope.launch {
+            store.setSession(null)
+            try { api.logout(previous.token) } catch (_: java.io.IOException) { }
+        }
+    }
+
+    private fun problem(e: Exception) {
+        if (e is CancellationException) throw e
+        if (e is ApiError && e.code == 401) {
+            logout()
+            _messages.tryEmit("La sesión terminó. Ingrese nuevamente.")
+        } else _messages.tryEmit("No se pudo completar la operación: ${e.localizedMessage}")
+    }
+    private fun write(block: suspend (ReportRepository) -> Unit) {
+        val target = repo
+        viewModelScope.launch { disk.withLock { block(target) } }
+    }
+    private fun persist(r: Report) {
+        records = if (records.any { it.id == r.id }) records.map { if (it.id == r.id) r else it } else listOf(r) + records
+        write { it.save(r) }
+    }
+    private fun forget(r: Report) {
+        records = records.filterNot { it.id == r.id }
+        write { it.delete(r.id) }
+        r.attachments.forEach { ImageUtils.deleteQuietly(it.path) }
+    }
+    private fun Report.withEvent(text: String) = copy(timeline = timeline + TimelineEvent(shortNow(), text))
+    fun report(id: String?) = reports.firstOrNull { it.id == id }
+    val pendingCount get() = reports.count { it.status == ReportStatus.EN_COLA || it.status == ReportStatus.ENVIANDO }
+
+    fun refresh() {
+        val s = session ?: return
+        if (!isOnline) return
+        accountScope.launch {
+            try {
+                remote.withLock {
+                    api.me(s.token)
+                    catalog = api.catalog(s.token)
+                    val ids = api.ids(s.token)
+                    for (id in ids.asReversed()) {
+                        val old = records.find { it.id == id }
+                        if (old?.dirty == true || old?.deleted == true) continue
+                        val updated = api.detail(s.token,id,old)
+                        if (records.find { it.id == id } == old) persist(updated)
+                    }
+                    records.filter { !it.dirty && it.id !in ids && !(it.id.startsWith("LOCAL-") && it.status == ReportStatus.BORRADOR) }.forEach(::forget)
+                }
+            } catch (e: Exception) { problem(e) }
+            if (s == session) syncAll()
+        }
     }
 
     // ---- Borrador ----
@@ -206,7 +236,7 @@ class ReportsViewModel(app: Application) : AndroidViewModel(app) {
     fun addAttachment(name: String, sizeMb: Double, replaceId: String? = null, path: String = ""): String? {
         validateAttachment(name, sizeMb, replaceId)?.let { return it }
         val kind = if (name.substringAfterLast('.').equals("pdf", ignoreCase = true)) AttachmentKind.PDF else AttachmentKind.IMAGEN
-        val item = Attachment("N${nextAttachment++}", name, sizeMb, kind, path)
+        val item = Attachment(UUID.randomUUID().toString(), name, sizeMb, kind, path)
         if (path.isNotBlank()) draftAddedPaths += path
         if (replaceId != null) releaseFile(draft.attachments.firstOrNull { it.id == replaceId })
         draft = draft.copy(
@@ -246,7 +276,7 @@ class ReportsViewModel(app: Application) : AndroidViewModel(app) {
             ).withEvent(event)
         } else {
             Report(
-                id = "RPT-2026-%04d".format(nextNumber++), type = d.type, process = d.process,
+                id = "RPT-" + UUID.randomUUID(), type = d.type, process = d.process,
                 area = d.area, shift = d.shift, notes = d.notes, user = user?.name ?: "Usuario demo",
                 createdAt = now(), status = status, attempts = 0, attachments = d.attachments,
                 timeline = listOf(TimelineEvent(shortNow(), event)),
@@ -256,93 +286,109 @@ class ReportsViewModel(app: Application) : AndroidViewModel(app) {
         // Archivos del reporte anterior que el usuario quitó al editar.
         existing?.attachments?.filter { old -> d.attachments.none { it.path == old.path } }?.forEach { ImageUtils.deleteQuietly(it.path) }
         draftAddedPaths.clear()
-        persist(saved)
+        persist(saved.copy(dirty=true))
         draft = Draft()
-        if (send) sync(saved.id, automatic = true) else _messages.tryEmit("Borrador guardado en el teléfono")
+        syncAfterChange(saved.id)
         return saved.id
     }
 
-    private suspend fun attemptSend(id: String, last: Boolean): Boolean {
-        commit(id) { it.copy(status = ReportStatus.ENVIANDO).withEvent("Enviando a VITAIROS (mock)") }
-        delay(1800)
-        val current = report(id) ?: return true // eliminado durante el envío
-        return if (simulateServerError) {
-            commit(id) {
-                it.copy(status = if (last) ReportStatus.ERROR else ReportStatus.EN_COLA, attempts = it.attempts + 1)
-                    .withEvent("Intento ${it.attempts + 1} fallido: error del servidor simulado")
-            }
-            if (last) _messages.tryEmit("Error al enviar ${current.id}. Puede reintentar manualmente")
-            false
-        } else {
-            commit(id) { it.copy(status = ReportStatus.SINCRONIZADO, attempts = it.attempts + 1).withEvent("Sincronizado correctamente") }
-            _messages.tryEmit("${current.id} enviado correctamente")
-            true
+    private fun syncAfterChange(id: String) {
+        val active = syncJobs[id]
+        accountScope.launch {
+            active?.join()
+            if (isOnline) sync(id, automatic = true)
         }
     }
 
-    /**
-     * Simula el envío al mock de la API. Automático: hasta 3 intentos con espera de 5, 15 y 30 s.
-     * Manual (botón Reintentar): un intento inmediato.
-     */
     fun sync(id: String, automatic: Boolean = false) {
-        val current = report(id) ?: return
-        if (current.status == ReportStatus.ENVIANDO || current.status == ReportStatus.SINCRONIZADO) return
-        if (syncJobs[id]?.isActive == true) return
-        syncJobs[id] = viewModelScope.launch {
-            val attempts = if (automatic) MockData.retryBackoffSeconds.size else 1
-            for (i in 0 until attempts) {
-                if (report(id) == null) return@launch
-                if (!isOnline) {
-                    commit(id) { it.copy(status = ReportStatus.EN_COLA).withEvent("Sin conexión: permanece en cola") }
-                    _messages.tryEmit("Sin conexión. $id queda en cola y se enviará al recuperar la red")
-                    return@launch
+        val s = session ?: return
+        if (!isOnline || syncJobs[id]?.isActive == true) return
+        syncJobs[id] = accountScope.launch {
+            val tries = if (automatic) MockData.retryBackoffSeconds.size else 1
+            for (attempt in 0 until tries) {
+                if (!isOnline) return@launch
+                var retry = false
+                remote.withLock {
+                    val r = records.find { it.id == id } ?: return@withLock
+                    if (!r.dirty && !r.deleted) return@withLock
+                    val sending = !r.deleted && r.status != ReportStatus.BORRADOR
+                    val current = if (sending) r.copy(status=ReportStatus.ENVIANDO) else r
+                    if (sending) persist(current)
+                    try {
+                        disk.withLock { } // El borrador ya está en Room antes de iniciar la petición.
+                        if (r.deleted) {
+                            api.delete(s.token,id)
+                            forget(r)
+                        } else {
+                            val saved = api.save(s.token,current,sending)
+                            if (records.find { it.id == id } == current) persist(saved)
+                        }
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        val transient = e !is ApiError || e.code >= 500
+                        retry = transient && attempt + 1 < tries
+                        if (sending && report(id) == current) persist(current.copy(
+                            status=if (retry || !isOnline) ReportStatus.EN_COLA else ReportStatus.ERROR,
+                            attempts=current.attempts+1).withEvent("Error de envío: ${e.localizedMessage}"))
+                        if (!retry || e is ApiError && e.code == 401) problem(e)
+                        if (r.deleted && e is ApiError && e.code == 409) {
+                            persist(r.copy(deleted=false,dirty=false))
+                            refresh()
+                        }
+                    }
                 }
-                val last = i == attempts - 1
-                if (attemptSend(id, last)) return@launch
-                if (!last) {
-                    val wait = MockData.retryBackoffSeconds[i]
-                    commit(id) { it.withEvent("Reintento automático ${i + 2} de $attempts en $wait s") }
-                    delay(wait * 1000L)
-                }
+                if (!retry) return@launch
+                delay(MockData.retryBackoffSeconds[attempt] * 1000L)
             }
         }
     }
-
-    fun syncAll() {
-        val ids = reports.filter { it.status == ReportStatus.EN_COLA || it.status == ReportStatus.ERROR }.map { it.id }
-        if (ids.isEmpty()) _messages.tryEmit("No hay reportes pendientes")
-        ids.forEach { sync(it) }
-    }
+    fun syncAll() = records.filter { it.dirty || it.deleted }.forEach { sync(it.id,automatic=true) }
 
     fun delete(id: String) {
         val r = report(id) ?: return
-        syncJobs.remove(id)?.cancel()
-        r.attachments.forEach { ImageUtils.deleteQuietly(it.path) }
-        reports = reports.filterNot { it.id == id }
-        write { repo.delete(id) }
-        _messages.tryEmit("Reporte $id eliminado")
+        if (r.user != user?.name || !r.status.deletable) return
+        persist(r.copy(deleted=true,dirty=true))
+        syncAfterChange(id)
     }
 
-    // ---- Conectividad y preferencias ----
+    fun correct(r: Report, note: String) {
+        val s = session ?: return
+        accountScope.launch {
+            try { remote.withLock { persist(api.correct(s.token,r,note.trim())) } }
+            catch (e: Exception) { problem(e) }
+        }
+    }
+
+    suspend fun currentWeather(latitude: Double, longitude: Double): org.json.JSONObject? {
+        val s = session ?: return null
+        return try { api.currentWeather(s.token,latitude,longitude).takeIf { session == s } }
+        catch (e: Exception) { if (session == s) problem(e); null }
+    }
+
+    fun download(id: String, attachment: Attachment) {
+        val s = session ?: return
+        accountScope.launch {
+            try {
+                remote.withLock {
+                    val current = report(id) ?: return@withLock
+                    val file = api.download(s.token,id,attachment,ImageUtils.attachmentsDir(app))
+                    if (report(id) == current) persist(current.copy(attachments=current.attachments.map {
+                        if (it.id == attachment.id) it.copy(path=file.path) else it
+                    })) else file.delete()
+                }
+            } catch (e: Exception) { problem(e) }
+        }
+    }
+
     private fun updateOnline(network: Boolean = networkAvailable, demo: Boolean = demoOffline) {
         val before = isOnline
         networkAvailable = network
         demoOffline = demo
-        if (!before && isOnline) {
-            _messages.tryEmit("Conexión recuperada. Sincronizando pendientes…")
-            reports.filter { it.status == ReportStatus.EN_COLA }.forEach { sync(it.id, automatic = true) }
-        } else if (before && !isOnline) {
-            _messages.tryEmit("Sin conexión. Los reportes se guardan en el teléfono")
-        }
+        if (!before && isOnline) refresh()
     }
 
     fun changeDemoOffline(value: Boolean) {
         updateOnline(demo = value)
         viewModelScope.launch { store.setDemoOffline(value) }
-    }
-
-    fun setSimulateError(value: Boolean) {
-        simulateServerError = value
-        viewModelScope.launch { store.setSimulateError(value) }
     }
 }

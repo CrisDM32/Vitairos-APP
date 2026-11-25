@@ -24,6 +24,9 @@ data class ReportEntity(
     val supervisorNote: String?,
     val latitude: Double?,
     val longitude: Double?,
+    val weather: String?,
+    val dirty: Boolean,
+    val deleted: Boolean,
 )
 
 @Entity(

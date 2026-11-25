@@ -49,12 +49,11 @@ fun ProfileScreen(vm: ReportsViewModel, onLogout: () -> Unit) {
                 SimulationBadge()
             }
             ToggleRow("Modo sin conexión", "Los reportes quedan en cola local", vm.demoOffline) { vm.changeDemoOffline(it) }
-            ToggleRow("Simular error del servidor", "El próximo envío terminará en Error", vm.simulateServerError) { vm.setSimulateError(it) }
 
             SectionTitle("Acerca de")
             Text("VITAIROS Reportes · maqueta v0.1 (DSY1105)", style = MaterialTheme.typography.bodyLarge)
             Text(
-                "Datos ficticios. La API, el procesamiento de IA y los estados posteriores son simulados. Android 8.0+ · solo teléfono.",
+                "La sesión y los reportes se sincronizan con VITAIROS. La extracción con IA es una simulación local.",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

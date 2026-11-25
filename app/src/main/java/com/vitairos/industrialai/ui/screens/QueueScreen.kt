@@ -46,7 +46,7 @@ import com.vitairos.industrialai.ui.components.VitairosTopBar
 
 @Composable
 fun QueueScreen(vm: ReportsViewModel, onOpenReport: (String) -> Unit, onEdit: (Report) -> Unit) {
-    val queue = vm.reports.filter { it.status.inQueue }
+    val queue = vm.reports.filter { it.status.inQueue && it.user == vm.user?.name }
     var toDelete by remember { mutableStateOf<Report?>(null) }
 
     Column(Modifier.fillMaxSize()) {

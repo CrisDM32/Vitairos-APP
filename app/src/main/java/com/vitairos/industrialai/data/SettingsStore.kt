@@ -1,32 +1,43 @@
 package com.vitairos.industrialai.data
 
 import android.content.Context
-import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
 
 private val Context.dataStore by preferencesDataStore(name = "settings")
 
-data class Settings(val sessionEmail: String?, val demoOffline: Boolean, val simulateServerError: Boolean)
-
-/** Preferencias simples. Nunca se guarda la contraseña: solo el correo de la sesión ficticia. */
 class SettingsStore(private val context: Context) {
-    private val emailKey = stringPreferencesKey("session_email")
-    private val offlineKey = booleanPreferencesKey("demo_offline")
-    private val errorKey = booleanPreferencesKey("simulate_error")
+    private val token = stringPreferencesKey("bearer")
+    private val expires = stringPreferencesKey("expires")
+    private val email = stringPreferencesKey("session_email")
+    private val name = stringPreferencesKey("profile_name")
+    private val role = stringPreferencesKey("profile_role")
+    private val offline = booleanPreferencesKey("demo_offline")
 
-    private fun Preferences.toSettings() = Settings(this[emailKey], this[offlineKey] ?: false, this[errorKey] ?: false)
-
-    val settings: Flow<Settings> = context.dataStore.data.map { it.toSettings() }
-
-    suspend fun load(): Settings = settings.first()
-
-    suspend fun setSession(email: String?) = context.dataStore.edit { if (email == null) it.remove(emailKey) else it[emailKey] = email }
-    suspend fun setDemoOffline(value: Boolean) = context.dataStore.edit { it[offlineKey] = value }
-    suspend fun setSimulateError(value: Boolean) = context.dataStore.edit { it[errorKey] = value }
+    suspend fun session(): Session? {
+        val p = context.dataStore.data.first()
+        return Session(p[token] ?: return null, p[expires] ?: return null,
+            com.vitairos.industrialai.model.DemoUser(p[email] ?: return null, p[name] ?: return null,
+                com.vitairos.industrialai.model.Role.valueOf(p[role] ?: return null)))
+    }
+    suspend fun setSession(s: Session?) = context.dataStore.edit {
+        if (s == null) {
+            it.remove(token)
+            it.remove(expires)
+            it.remove(email)
+            it.remove(name)
+            it.remove(role)
+        } else {
+            it[token] = s.token
+            it[expires] = s.expiresAt
+            it[email] = s.profile.email
+            it[name] = s.profile.name
+            it[role] = s.profile.role.name
+        }
+    }
+    suspend fun offline() = context.dataStore.data.first()[offline] ?: false
+    suspend fun setDemoOffline(value: Boolean) = context.dataStore.edit { it[offline] = value }
 }

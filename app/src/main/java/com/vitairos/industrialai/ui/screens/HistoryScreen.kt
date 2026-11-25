@@ -30,6 +30,7 @@ fun HistoryScreen(vm: ReportsViewModel, onOpenReport: (String) -> Unit) {
     val list = vm.reports.filter { filter == null || it.status == filter }
     Column(Modifier.fillMaxSize()) {
         VitairosTopBar("Historial")
+        androidx.compose.material3.TextButton(onClick = vm::refresh, enabled = vm.isOnline) { Text("Actualizar historial") }
         LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),

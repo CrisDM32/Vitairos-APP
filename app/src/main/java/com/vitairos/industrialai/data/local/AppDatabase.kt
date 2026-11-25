@@ -45,18 +45,24 @@ interface ReportDao {
 
 @Database(
     entities = [ReportEntity::class, AttachmentEntity::class, TimelineEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun reportDao(): ReportDao
 
     companion object {
-        @Volatile private var instance: AppDatabase? = null
-
-        fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
-            instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "vitairos.db")
-                .build().also { instance = it }
-        }
+        private val instances = mutableMapOf<String, AppDatabase>()
+        @Synchronized fun get(context: Context, name: String = "vitairos.db"): AppDatabase =
+            instances.getOrPut(name) {
+                Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, name)
+                    .addMigrations(object : androidx.room.migration.Migration(1, 2) {
+                        override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                            db.execSQL("ALTER TABLE reports ADD COLUMN weather TEXT")
+                            db.execSQL("ALTER TABLE reports ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0")
+                            db.execSQL("ALTER TABLE reports ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
+                        }
+                    }).build()
+            }
     }
 }

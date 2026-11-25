@@ -37,10 +37,8 @@ import com.vitairos.industrialai.R
 import com.vitairos.industrialai.data.MockData
 import com.vitairos.industrialai.ui.ReportsViewModel
 import com.vitairos.industrialai.ui.components.PrimaryButton
-import com.vitairos.industrialai.ui.components.SecondaryButton
 import com.vitairos.industrialai.ui.theme.Acero
 import com.vitairos.industrialai.ui.theme.Hueso
-import com.vitairos.industrialai.ui.theme.Oro
 import com.vitairos.industrialai.ui.theme.VerdeNoche
 import com.vitairos.industrialai.ui.theme.VitairosTheme
 
@@ -49,11 +47,11 @@ fun LoginScreen(vm: ReportsViewModel, onLoggedIn: () -> Unit) {
     // La pantalla de ingreso siempre usa la superficie oscura de la marca.
     VitairosTheme(darkTheme = true) {
         var email by remember { mutableStateOf(MockData.users.first().email) }
-        var password by remember { mutableStateOf(MockData.DEMO_PASSWORD) }
+        var password by remember { mutableStateOf("") }
         var error by remember { mutableStateOf<String?>(null) }
         var submitted by remember { mutableStateOf(false) }
         val emailError = if (submitted) Validators.email(email) else null
-        val passwordError = if (submitted) Validators.password(password) else null
+        val passwordError = if (submitted && password.isEmpty()) "Ingrese su contraseña" else null
 
         Column(
             modifier = Modifier
@@ -93,26 +91,13 @@ fun LoginScreen(vm: ReportsViewModel, onLoggedIn: () -> Unit) {
                 Text(error.orEmpty(), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
             }
 
-            PrimaryButton("Ingresar", onClick = {
+            PrimaryButton(if (vm.loggingIn) "Ingresando…" else "Ingresar", enabled = !vm.loggingIn, onClick = {
                 submitted = true
-                if (Validators.email(email) == null && Validators.password(password) == null) {
-                    if (vm.login(email, password)) onLoggedIn() else error = "Usuario o contraseña incorrectos (demo)"
+                if (Validators.email(email) == null && password.isNotEmpty()) {
+                    vm.login(email,password) { message -> if (message == null) onLoggedIn() else error = message }
                 }
             })
 
-            Text("o ingrese rápido con un usuario ficticio", color = Acero, style = MaterialTheme.typography.bodyMedium)
-            MockData.users.forEach { demo ->
-                SecondaryButton(
-                    "${demo.role.label}: ${demo.name}",
-                    onClick = { vm.loginAs(demo); onLoggedIn() },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Maqueta académica DSY1105 · sesión simulada con usuarios ficticios. No se usan credenciales ni datos reales de VITAIROS.",
-                color = Oro, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center,
-            )
         }
     }
 }

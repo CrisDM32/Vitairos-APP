@@ -223,7 +223,7 @@ fun AttachmentsScreen(vm: ReportsViewModel, onBack: () -> Unit, onExtract: () ->
                 }
             }
             Text(
-                "Formatos: JPG, PNG, PDF · máx. 10 MB por archivo · máx. ${MockData.MAX_ATTACHMENTS} archivos. Las imágenes se optimizan al guardar y se almacenan solo en la app.",
+                "Formatos: JPG, PNG, PDF · máx. 10 MB por archivo · máx. ${MockData.MAX_ATTACHMENTS} archivos. Las imágenes se optimizan al guardar y se envían junto con el reporte.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

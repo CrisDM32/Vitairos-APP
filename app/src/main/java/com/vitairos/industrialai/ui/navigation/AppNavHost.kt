@@ -98,6 +98,10 @@ fun AppNavHost(vm: ReportsViewModel = viewModel()) {
         return
     }
     val startRoute = remember { if (vm.user != null) Routes.HOME else Routes.LOGIN }
+    LaunchedEffect(vm.user,route) {
+        if (vm.user == null && route != null && route != Routes.LOGIN)
+            nav.navigate(Routes.LOGIN) { popUpTo(0) { inclusive = true } }
+    }
     val tabRoutes = remember { tabs.map { it.route } }
     fun AnimatedContentTransitionScope<NavBackStackEntry>.betweenTabs() =
         initialState.destination.route in tabRoutes && targetState.destination.route in tabRoutes

@@ -5,7 +5,7 @@ App Android nativa (Kotlin + Jetpack Compose + Material 3), minSdk 26 (Android 8
 ## Ejecutar
 - Abrir la carpeta en Android Studio y ejecutar `app`, o `gradlew.bat assembleDebug` (JDK 17). APK: `app/build/outputs/apk/debug/app-debug.apk`.
 - Tests: `gradlew.bat testDebugUnitTest`.
-- Login demo: `operador@vitairos.demo` / `demo1234` (o los botones de acceso rápido).
+- Inicie los dos servicios y configure las claves de operador y supervisor según la [guía del backend](backend/README.md). En Android, ingrese con el correo de la cuenta y la clave que configuró.
 
 ## Qué funciona de verdad
 | Requisito | Implementación |
@@ -18,12 +18,26 @@ App Android nativa (Kotlin + Jetpack Compose + Material 3), minSdk 26 (Android 8
 | Navegación | Transiciones entre pantallas, pestañas con fundido, confirmación al descartar borradores, sesión persistente. |
 | Animaciones | Entrada escalonada, chips de estado animados, icono "Enviando" giratorio, banner de conexión, progreso de pasos, contadores, escala de botones, reordenado de listas, deslizar para eliminar. |
 
-## Qué sigue simulado
-API de envío (mock con 3 reintentos automáticos de 5/15/30 s y reintento manual), extracción con IA («Simulación»), estados "En revisión/Procesado", rol Supervisor y sesión con usuarios ficticios. No hay backend ni datos reales.
+## Conexión entre Android y Spring
+
+El APK debug usa `http://10.0.2.2:8081` para identidad y `http://10.0.2.2:8082` para reportes. En el emulador estándar estas direcciones llegan al equipo de desarrollo. Inicie ambos servicios antes de ingresar. Para cambiar los destinos, defina `IDENTITY_URL` y `REPORTS_URL` en las propiedades de Gradle y vuelva a compilar. Use los orígenes sin el sufijo `/api/v1`. En builds de distribución configure servicios HTTPS.
+
+Para un teléfono conectado por USB, ejecute `adb reverse tcp:8081 tcp:8081` y `adb reverse tcp:8082 tcp:8082` y compile debug con `-PIDENTITY_URL=http://127.0.0.1:8081 -PREPORTS_URL=http://127.0.0.1:8082`.
+
+Con ubicación registrada, el formulario permite consultar el clima actual antes del envío. El operador puede guardar borradores, enviar adjuntos y corregir reportes observados. El supervisor puede refrescar el historial, descargar los archivos y solicitar una corrección desde el detalle. El detalle muestra el clima capturado por el servidor cuando hay una lectura disponible. Solo la extracción con IA sigue simulada.
+
+La caché Room se separa por cuenta. Una sesión vigente permite trabajar sin red y los cambios se envían al recuperar conexión o al pulsar **Sincronizar todo**. El historial se puede actualizar manualmente para ver cambios de otros dispositivos.
+
+### Prueba de integración Android
+
+Con un emulador dedicado y ambos servicios apuntando a bases de prueba, ejecute el siguiente comando desde PowerShell. Crea y sincroniza un reporte, descarga su adjunto desde la cuenta del supervisor y verifica la corrección y el reenvío. Use las claves temporales configuradas en identidad.
+
+```powershell
+.\gradlew.bat connectedDebugAndroidTest "-Pandroid.testInstrumentationRunnerArguments.operatorPassword=$env:OPERATOR_PASSWORD" "-Pandroid.testInstrumentationRunnerArguments.supervisorPassword=$env:SUPERVISOR_PASSWORD"
+```
 
 ## Estructura
-`model/` modelos · `data/local/` Room · `data/SettingsStore` DataStore · `data/MockData` catálogos y datos de ejemplo (se siembran en la primera ejecución) · `ui/ReportsViewModel` estado · `ui/Validators` · `ui/theme` paleta VITAIROS · `ui/components` · `ui/screens` · `ui/navigation` · `util/` imágenes, GPS y conectividad.
+`model/` modelos · `data/local/` Room · `data/SettingsStore` DataStore · `data/MockData` catálogo inicial sin conexión y datos de extracción simulada · `ui/ReportsViewModel` estado · `ui/Validators` · `ui/theme` paleta VITAIROS · `ui/components` · `ui/screens` · `ui/navigation` · `util/` imágenes, GPS y conectividad.
 
 ## Notas
-- Al abrir la app la cola no se sincroniza sola; los pendientes se envían al recuperar la conexión o con "Sincronizar todo".
 - Versiones: Room 2.8.5, DataStore 1.2.1, KSP 2.3.12 (todas estables).

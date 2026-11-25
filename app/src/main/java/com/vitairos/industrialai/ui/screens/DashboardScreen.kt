@@ -61,7 +61,7 @@ fun DashboardScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Hola, ${vm.user?.name?.substringBefore(" ") ?: "operador"}", style = MaterialTheme.typography.headlineMedium)
                     Text(
-                        "${vm.user?.role?.label ?: "Operador"} · Turno A · Faena Norte",
+                        vm.user?.role?.label ?: "Operador",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     PrimaryButton("Nuevo reporte", onClick = onNewReport, icon = Icons.Filled.Add)

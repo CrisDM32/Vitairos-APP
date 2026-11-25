@@ -83,6 +83,8 @@ fun NewReportScreen(vm: ReportsViewModel, onBack: () -> Unit, onContinue: () -> 
     var showErrors by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
     var locating by remember { mutableStateOf(false) }
+    var currentWeather by remember(d.latitude,d.longitude) { mutableStateOf<org.json.JSONObject?>(null) }
+    var checkingWeather by remember { mutableStateOf(false) }
     var gpsMessage by remember { mutableStateOf<String?>(null) }
     val errors = if (showErrors) ReportFormErrors.validate(d) else ReportFormErrors()
 
@@ -135,10 +137,10 @@ fun NewReportScreen(vm: ReportsViewModel, onBack: () -> Unit, onContinue: () -> 
             }
 
             SectionTitle("Tipo y proceso")
-            DropdownField("Tipo de reporte *", d.type, MockData.reportTypes, { v -> vm.updateDraft { it.copy(type = v) } }, error = errors.type)
-            DropdownField("Proceso asociado *", d.process, MockData.processes, { v -> vm.updateDraft { it.copy(process = v) } }, error = errors.process)
-            DropdownField("Área / faena *", d.area, MockData.areas, { v -> vm.updateDraft { it.copy(area = v) } }, error = errors.area)
-            DropdownField("Turno *", d.shift, MockData.shifts, { v -> vm.updateDraft { it.copy(shift = v) } }, error = errors.shift)
+            DropdownField("Tipo de reporte *", d.type, vm.catalog.reportTypes, { v -> vm.updateDraft { it.copy(type = v) } }, error = errors.type)
+            DropdownField("Proceso asociado *", d.process, vm.catalog.processes, { v -> vm.updateDraft { it.copy(process = v) } }, error = errors.process)
+            DropdownField("Área / faena *", d.area, vm.catalog.areas, { v -> vm.updateDraft { it.copy(area = v) } }, error = errors.area)
+            DropdownField("Turno *", d.shift, vm.catalog.shifts, { v -> vm.updateDraft { it.copy(shift = v) } }, error = errors.shift)
 
             val incident = d.type.contains("incidente", ignoreCase = true)
             OutlinedTextField(
@@ -181,6 +183,20 @@ fun NewReportScreen(vm: ReportsViewModel, onBack: () -> Unit, onContinue: () -> 
                             Modifier.weight(1f), Icons.Filled.LocationOn, enabled = !locating,
                         )
                         if (d.hasLocation) SecondaryButton("Quitar", { vm.setLocation(null, null); gpsMessage = null }, icon = Icons.Filled.Close)
+                    }
+                    if (d.latitude != null && d.longitude != null) {
+                        SecondaryButton("Consultar clima actual", {
+                            scope.launch {
+                                checkingWeather = true
+                                try { currentWeather = vm.currentWeather(d.latitude,d.longitude) }
+                                finally { checkingWeather = false }
+                            }
+                        }, enabled = vm.isOnline && !checkingWeather)
+                        currentWeather?.let { w ->
+                            Text("${w.getDouble("temperatureC")} °C · Humedad ${w.getInt("humidityPercent")}% · Viento ${w.getDouble("windSpeedKmh")} km/h")
+                            val uri = androidx.compose.ui.platform.LocalUriHandler.current
+                            androidx.compose.material3.TextButton({ uri.openUri("https://open-meteo.com/") }) { Text("Datos de Open-Meteo") }
+                        }
                     }
                     AnimatedVisibility(locating) {
                         Row(verticalAlignment = Alignment.CenterVertically) {

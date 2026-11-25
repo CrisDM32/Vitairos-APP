@@ -55,6 +55,9 @@ data class Report(
     val supervisorNote: String? = null,
     val latitude: Double? = null,
     val longitude: Double? = null,
+    val weather: String? = null,
+    val dirty: Boolean = false,
+    val deleted: Boolean = false,
 ) {
     val hasLocation get() = latitude != null && longitude != null
 }
