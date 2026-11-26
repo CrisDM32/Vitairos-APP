@@ -1,0 +1,99 @@
+VITAIROS | Guía de arranque en Windows
+
+Docker ejecuta los servicios de identidad y reportes en tu PC. La aplicación
+Android se ejecuta en un emulador o en un teléfono. Para el primer arranque,
+sigue los pasos 1 a 4 y después elige una de las dos opciones del paso 5.
+
+1. Prepara el equipo
+
+   Abre Docker Desktop en modo de contenedores Linux y espera a que el motor
+   esté listo. Para la app necesitarás Android Studio y un dispositivo con
+   Android 8.0 o superior. La primera compilación requiere acceso a internet.
+   Abre PowerShell y ejecuta los comandos desde la carpeta del proyecto:
+
+   cd 'raiz del proyecto'
+   docker info
+   docker compose version
+
+   Si docker info muestra un error de conexión en la sección Server, espera a
+   que Docker Desktop termine de iniciar y vuelve a ejecutar el comando.
+
+2. Configura las dos cuentas
+
+   En la misma ventana de PowerShell, pega estas líneas una por una. Escribe
+   una clave cuando se solicite y presiona Enter. Guarda ambas claves para
+   iniciar sesión en Android.
+
+   $env:OPERATOR_PASSWORD = [System.Net.NetworkCredential]::new('', (Read-Host 'Clave del operador' -AsSecureString)).Password
+   $env:SUPERVISOR_PASSWORD = [System.Net.NetworkCredential]::new('', (Read-Host 'Clave del supervisor' -AsSecureString)).Password
+
+3. Levanta el backend
+
+   docker compose up --build -d
+   docker compose ps
+
+   Deben aparecer identity-service en el puerto 8081 y report-service en el
+   8082, ambos con estado Up. Spring puede tardar unos segundos adicionales
+   en empezar a aceptar conexiones. Para ver los mensajes de arranque:
+
+   docker compose logs --tail 80
+
+4. Comprueba el inicio de sesión y la conexión entre los servicios
+
+   En la misma ventana, ejecuta:
+
+   $body = @{ email = 'operador@vitairos.demo'; password = $env:OPERATOR_PASSWORD } | ConvertTo-Json
+   $sesion = Invoke-RestMethod -Method Post -Uri 'http://localhost:8081/api/v1/sessions' -ContentType 'application/json' -Body $body
+   $headers = @{ Authorization = "Bearer $($sesion.accessToken)" }
+   $catalogo = Invoke-RestMethod -Uri 'http://localhost:8082/api/v1/catalog' -Headers $headers
+   $catalogo.reportTypes
+
+   Deberías ver «Reporte de turno v1» entre los resultados. Esto confirma
+   que identidad emitió una sesión y reportes la aceptó.
+
+5A. Usa la app en el emulador de Android Studio
+
+   a) En Android Studio, selecciona Open y abre la carpeta Vitairos-APP.
+      Espera a que termine la sincronización de Gradle.
+   b) En Device Manager, inicia un teléfono virtual. Si es la primera vez,
+      usa Create Virtual Device y elige una imagen Android de API 26 o superior.
+   c) Selecciona el módulo app y el emulador en la barra superior. Pulsa Run.
+      La compilación debug ya apunta a los puertos 8081 y 8082 del PC
+      mediante 10.0.2.2.
+   d) Inicia sesión en VITAIROS con operador@vitairos.demo y la clave de
+      operador del paso 2. Para entrar como supervisor, usa
+      supervisor@vitairos.demo y su clave. Mantén Docker Desktop abierto.
+
+5B. Alternativa para un teléfono por USB
+
+   Activa la depuración USB en el teléfono, conéctalo y acepta la autorización
+   en la pantalla. Cierra los emuladores y deja conectado solo ese teléfono.
+   Desde la carpeta del proyecto, con adb (Android SDK Platform-Tools) en el
+   PATH y un JDK compatible con el proyecto (17), ejecuta:
+
+   adb devices
+
+   Cuando el teléfono aparezca con estado device, ejecuta:
+
+   adb reverse tcp:8081 tcp:8081
+   adb reverse tcp:8082 tcp:8082
+   .\gradlew.bat :app:installDebug "-PIDENTITY_URL=http://127.0.0.1:8081" "-PREPORTS_URL=http://127.0.0.1:8082"
+
+   Abre VITAIROS en el teléfono e inicia sesión con una cuenta del paso 5A.
+   Mantén el cable conectado. Si lo reconectas, repite ambos comandos adb reverse.
+
+6. Detén y reanuda el servicio
+
+   Para detener el backend al terminar:
+
+   docker compose stop
+
+   Para retomarlo otro día, abre Docker Desktop y, desde la misma carpeta,
+   ejecuta:
+
+   docker compose start
+   docker compose ps
+
+   Los contenedores conservan su configuración y las bases H2 se guardan en
+   volúmenes de Docker. Si necesitas recompilar tras cambiar el código, vuelve
+   a definir las claves del paso 2 y repite el paso 3.

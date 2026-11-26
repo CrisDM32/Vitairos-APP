@@ -1,0 +1,35 @@
+services:
+  identity-service:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      args:
+        SERVICE: identity-service
+    environment:
+      BIND_ADDRESS: 0.0.0.0
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:-}
+      SUPERVISOR_PASSWORD: ${SUPERVISOR_PASSWORD:-}
+    ports:
+      - "127.0.0.1:8081:8081"
+    volumes:
+      - identity-data:/app/data
+
+  report-service:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      args:
+        SERVICE: report-service
+    environment:
+      BIND_ADDRESS: 0.0.0.0
+      IDENTITY_URL: http://identity-service:8081
+    depends_on:
+      - identity-service
+    ports:
+      - "127.0.0.1:8082:8082"
+    volumes:
+      - report-data:/app/data
+
+volumes:
+  identity-data:
+  report-data:

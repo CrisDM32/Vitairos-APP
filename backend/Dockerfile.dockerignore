@@ -1,0 +1,10 @@
+**
+!gradlew
+!gradle/
+!gradle/wrapper/
+!gradle/wrapper/**
+!backend/
+!backend/*.gradle
+!backend/*-service/
+!backend/*-service/src/
+!backend/*-service/src/**
